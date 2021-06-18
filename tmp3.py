@@ -1,4 +1,3 @@
-import collections
 import re
 
 
@@ -41,6 +40,7 @@ def make_kwargs(old_kwargs, default_para_back='required', **kwargs):
 class Fields:
 
     def __init__(self, zh_name=None, **kwargs):
+        print(kwargs)
         self.kw = DotDict(kwargs)
         self.is_valid = True
         self.error_message = '校验成功'
@@ -55,9 +55,12 @@ class Fields:
 
     def __call__(self, value, *args, **kwargs):
         checkers = []
+        custom_error_message = None
         for k, v in self.kw.items():
             if hasattr(self, '_' + k):
                 checkers.append('_check' + '_' + k)
+            elif k == 'custom_error_message':
+                custom_error_message = v
             else:
                 raise AttributeError('无此属性: {}'.format(k))
 
@@ -65,7 +68,7 @@ class Fields:
             check = getattr(self, checker)
             print('当前检查项： ' + check.__name__)
             if not check(value):
-                err_msg = self.get_error_message(check.__doc__)
+                err_msg = custom_error_message or self.get_error_message(check.__doc__)
                 fmt = list(map(lambda x: str(getattr(self, x)), err_msg[1]))
 
                 print('检查错误: ' + err_msg[0].format(*fmt))
@@ -159,7 +162,7 @@ class CharFields(Fields):
 class EmailFields(CharFields):
     def __init__(self, *args, **kwargs):
         kwargs = make_kwargs(kwargs, regex=r'^\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$')
-        super(EmailFields, self).__init__(*args, **kwargs)
+        super(EmailFields, self).__init__(custom_error_message='邮箱格式错误', *args, **kwargs)
 
 
 # test = Fields(required=True, equal='test00', data_type=str, min_length=4, max_length=10)
@@ -169,4 +172,4 @@ class EmailFields(CharFields):
 # test(1)
 
 test = EmailFields(required=True, min_length=4, max_length=20)
-test('166999@qq.com')
+test('166999@qqcom')
