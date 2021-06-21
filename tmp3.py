@@ -122,7 +122,7 @@ class Fields:
         :error_message: 数据类型错误
         :param value: 为tuple时，为or关系
         """
-        if isinstance(value, tuple):
+        if isinstance(value, tuple) or isinstance(value, list):
             return reduce(lambda x, y: x or y, map(lambda z: isinstance(value, z), self._data_type))
         else:
             return isinstance(value, self._data_type)
