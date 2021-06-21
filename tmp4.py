@@ -1,4 +1,7 @@
-import re
-pattern = re.compile(r'^\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$')
-str = '166997150@qq.com'
-print(pattern.match(str))
+from functools import reduce
+rule = (int, str)
+value = 12.1
+# b = map(lambda z: isinstance(value, z), rule)
+
+a = reduce(lambda x, y: x or y, map(lambda z: isinstance(value, z), rule))
+print(a)

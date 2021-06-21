@@ -1,4 +1,5 @@
 import re
+from functools import reduce
 
 
 class DotDict(dict):
@@ -58,7 +59,7 @@ class Fields:
         custom_error_message = None
         for k, v in self.kw.items():
             if hasattr(self, '_' + k):
-                checkers.append('_check' + '_' + k)
+                checkers.append('_check' + '_' + k)     # 如：max_length -> self._max_length
             elif k == 'custom_error_message':
                 custom_error_message = v
             else:
@@ -68,8 +69,12 @@ class Fields:
             check = getattr(self, checker)
             print('当前检查项： ' + check.__name__)
             if not check(value):
-                err_msg = custom_error_message or self.get_error_message(check.__doc__)
-                fmt = list(map(lambda x: str(getattr(self, x)), err_msg[1]))
+                if custom_error_message:    # 子类自定义错误信息
+                    err_msg = self.get_error_message(custom_error_message, default=False)
+                else:   # 使用验证函数的注释文档作为错误信息
+                    err_msg = self.get_error_message(check.__doc__)
+
+                fmt = list(map(lambda x: str(getattr(self, '_' + x)), err_msg[1]))
 
                 print('检查错误: ' + err_msg[0].format(*fmt))
                 return
@@ -77,15 +82,28 @@ class Fields:
                 print('检查成功')
 
     @staticmethod
-    def get_error_message(value):
-        for msg in value.split('\n'):
-            if msg.strip().startswith(':error_message:'):   # 通过指定字符串开头的行找到错误信息行
-                msg = msg.split(':error_message:')[1].strip()   # 通过split取得错误信息
-                msg_split = re.split(r'[{|}]', msg)     # 通过正则拆分大括号内的内容
-                error_message = '{}'.join(msg_split[::2])   # 组装错误信息，加上{}
-                fmt = msg_split[1::2]       # 组装format信息成列表，解包
-                return error_message, fmt
-        return None, None
+    def get_error_message(value, default=True):
+        """
+        传入参数，转换成合理的错误信息与format参数
+        :param value: 错误信息
+        :param default: 当为True时，取验证函数的注释，当为False时，直接取value
+        :return: 返回元组，[0]为错误信息，[1]为format参数
+        """
+        err_msg = ''
+        if default:
+            for msg in value.split('\n'):
+                if msg.strip().startswith(':error_message:'):  # 通过指定字符串开头的行找到错误信息行
+                    err_msg = msg.split(':error_message:')[1].strip()  # 通过split取得错误信息
+                    break
+        else:
+            err_msg = value
+        if err_msg:
+            msg_split = re.split(r'[{|}]', err_msg)  # 通过正则拆分大括号内的内容
+            error_message = '{}'.join(msg_split[::2])  # 组装错误信息，加上{}
+            fmt = msg_split[1::2]  # 组装format信息成列表，解包
+            return error_message, fmt
+        else:
+            return '', ''
 
     def check_fail(self, error_message):
         return {
@@ -102,9 +120,12 @@ class Fields:
     def _check_data_type(self, value):
         """
         :error_message: 数据类型错误
+        :param value: 为tuple时，为or关系
         """
-        if isinstance(value, self._data_type):
-            return True
+        if isinstance(value, tuple):
+            return reduce(lambda x, y: x or y, map(lambda z: isinstance(value, z), self._data_type))
+        else:
+            return isinstance(value, self._data_type)
 
     def _check_required(self, value):
         """
@@ -120,7 +141,7 @@ class Fields:
 
     def _check_max_length(self, value):
         """
-        :error_message: 长度不可大于{_max_length}
+        :error_message: 长度不可大于{max_length}
         :param value:
         :return:
         """
@@ -129,7 +150,7 @@ class Fields:
 
     def _check_min_length(self, value):
         """
-        :error_message: 长度不可小于{_min_length}
+        :error_message: 长度不可小于{min_length}
         :param value:
         :return:
         """
@@ -137,7 +158,7 @@ class Fields:
 
     def _check_equal(self, value):
         """
-        :error_message: 必须等于{_equal}
+        :error_message: 必须等于{equal}
         :param value:
         :return:
         """
@@ -159,17 +180,39 @@ class CharFields(Fields):
         super(CharFields, self).__init__(*args, **kwargs)
 
 
+class IntegerFields(Fields):
+    def __init__(self, *args, **kwargs):
+        kwargs = make_kwargs(kwargs, data_type=int)
+        super(IntegerFields, self).__init__(*args, **kwargs)
+
+
+class FloatFields(Fields):
+    def __init__(self, *args, **kwargs):
+        kwargs = make_kwargs(kwargs, data_type=float)
+        super(FloatFields, self).__init__(*args, **kwargs)
+
+
+class NumFields(Fields):
+    def __init__(self, *args, **kwargs):
+        kwargs = make_kwargs(kwargs, data_type=(float, int))
+        super(NumFields, self).__init__(*args, **kwargs)
+
+
 class EmailFields(CharFields):
     def __init__(self, *args, **kwargs):
         kwargs = make_kwargs(kwargs, regex=r'^\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$')
-        super(EmailFields, self).__init__(custom_error_message='邮箱格式错误', *args, **kwargs)
+        super(EmailFields, self).__init__(custom_error_message='邮箱格式错误{regex}', *args, **kwargs)
 
 
 # test = Fields(required=True, equal='test00', data_type=str, min_length=4, max_length=10)
 # test('test001')
 
 # test = CharFields(required=True, min_length=4, max_length=10)
-# test(1)
+# test('s4141')
 
-test = EmailFields(required=True, min_length=4, max_length=20)
-test('166999@qqcom')
+
+# test = EmailFields(required=True, min_length=4, max_length=20)
+# test('166999@qqcom')
+
+test = FloatFields(required=True, min_length=4, max_length=10)
+test(3000)
