@@ -1,5 +1,6 @@
 import re
-from functools import reduce
+import time
+from functools import reduce, wraps
 
 
 class DotDict(dict):
@@ -18,43 +19,57 @@ def make_kwargs(old_kwargs, default_para_back='required', **kwargs):
     :param kwargs: 字类中需要添加的参数
     :return: 按照合理顺序组合的参数
     """
-    new_kw = {}
-    over = False
-    if default_para_back in old_kwargs:
-        for k, v in old_kwargs.items():
-            if over:
-                for new_k, new_v in kwargs.items():
-                    new_kw[new_k] = new_v
-                over = not over
-            if k == default_para_back:
-                over = True
-            new_kw[k] = v
-    else:
-        for new_k, new_v in kwargs.items():
-            new_kw[new_k] = new_v
-        for k, v in old_kwargs.items():
-            new_kw[k] = v
 
-    return new_kw
+    over = False
+    if 'required' not in old_kwargs:
+        new_kwargs = {**kwargs, **old_kwargs}
+    else:
+        kw1 = {}
+        kw2 = {}
+        for o_k, o_v in old_kwargs.items():
+            if not over:
+                kw1[o_k] = o_v
+                if o_k == 'required':
+                    over = True
+            else:
+                kw2[o_k] = o_v
+        new_kwargs = {**kw1, **kwargs, **kw2}
+    return new_kwargs
 
 
 class Fields:
 
-    def __init__(self, zh_name=None, **kwargs):
-        print(kwargs)
+    def __init__(self, zh_name=None, required=True, **kwargs):
         self.kw = DotDict(kwargs)
         self.is_valid = True
         self.error_message = '校验成功'
-        self.zh_name = zh_name
+        self.zh_name = zh_name or '参数'
+        self.required = required
 
         self._data_type = self.kw.data_type
-        self._required = self.kw.required
         self._max_length = self.kw.max_length
         self._min_length = self.kw.min_length
         self._equal = self.kw.equal
+        self._not_equal = self.kw.not_equal
         self._regex = self.kw.regex
 
     def __call__(self, value, *args, **kwargs):
+        """
+        1.首先判断是否为必填，为非必填且值为None时，停止验证，直接返回成功
+        2.通过初始化得kw值中获取需要验证得方法，
+        :param value:
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        if self.required:
+            if not self.check_required(value):
+                return self.check_fail('不可为空')
+        else:
+            if value is None:
+                return self.check_success()
+
+        # 组合需要验证的方法
         checkers = []
         custom_error_message = None
         for k, v in self.kw.items():
@@ -65,9 +80,9 @@ class Fields:
             else:
                 raise AttributeError('无此属性: {}'.format(k))
 
+        # 执行需要验证的方法
         for checker in checkers:
             check = getattr(self, checker)
-            print('当前检查项： ' + check.__name__)
             if not check(value):
                 if custom_error_message:    # 子类自定义错误信息
                     err_msg = self.get_error_message(custom_error_message, default=False)
@@ -75,11 +90,8 @@ class Fields:
                     err_msg = self.get_error_message(check.__doc__)
 
                 fmt = list(map(lambda x: str(getattr(self, '_' + x)), err_msg[1]))
-
-                print('检查错误: ' + err_msg[0].format(*fmt))
-                return
-            else:
-                print('检查成功')
+                return self.check_fail(err_msg[0].format(*fmt))
+        return self.check_success()
 
     @staticmethod
     def get_error_message(value, default=True):
@@ -114,7 +126,8 @@ class Fields:
     @staticmethod
     def check_success():
         return {
-            'is_valid': True
+            'is_valid': True,
+            'error_message': '校验成功'
         }
 
     def _check_data_type(self, value):
@@ -127,13 +140,13 @@ class Fields:
         else:
             return isinstance(value, self._data_type)
 
-    def _check_required(self, value):
+    def check_required(self, value):
         """
         :error_message: 不可为空
         :param value:
         :return:
         """
-        if self._required:
+        if self.required:
             if value is not None:
                 return True
         else:
@@ -163,6 +176,14 @@ class Fields:
         :return:
         """
         return self._equal == value
+
+    def _check_not_equal(self, value):
+        """
+        :error_message: 不可等于{not_equal}
+        :param value:
+        :return:
+        """
+        return self._not_equal != value
 
     def _check_regex(self, value):
         """
@@ -201,18 +222,49 @@ class NumFields(Fields):
 class EmailFields(CharFields):
     def __init__(self, *args, **kwargs):
         kwargs = make_kwargs(kwargs, regex=r'^\w+([-+.]\w+)*@\w+([-.]\w+)*\.\w+([-.]\w+)*$')
-        super(EmailFields, self).__init__(custom_error_message='邮箱格式错误{regex}', *args, **kwargs)
+        super(EmailFields, self).__init__(custom_error_message='格式错误', *args, **kwargs)
 
 
-# test = Fields(required=True, equal='test00', data_type=str, min_length=4, max_length=10)
-# test('test001')
+class ValidateBase:
+    def __get_result__(self, data):
+        result = None
+        json_data = DotDict(data)
+        for key in self.__dir__():
+            if not key.startswith('_'):
+                value = json_data.__getattr__(key)
+                result = getattr(self, key)(value)
+                if not result['is_valid']:
+                    return result
+        return result
 
-# test = CharFields(required=True, min_length=4, max_length=10)
-# test('s4141')
+
+def validator(scheme):
+    def validator_decorator(func):
+        @wraps(func)
+        def wrapper(request):
+            checker = scheme()
+            result = checker.__get_result__(request.body)
+            request.body['is_valid'] = result['is_valid']
+            request.body['error_message'] = result['error_message']
+            return func(request)
+        return wrapper
+    return validator_decorator
 
 
-# test = EmailFields(required=True, min_length=4, max_length=20)
-# test('166999@qqcom')
+class Login(ValidateBase):
+    username = CharFields('用户名', min_length=4, max_length=20, not_equal='test001')
+    password = CharFields('密码', min_length=8, max_length=18)
+    email = EmailFields('电子邮箱')
+    height = NumFields('身高', required=False, equal=1)
 
-test = FloatFields(required=True, min_length=4, max_length=10)
-test(3000)
+
+test_data = {
+    'username': 'test00',
+    'password': 'abc0000000000',
+    'email': '1669971502@qq.com',
+    'height': 1
+}
+
+
+login = Login()
+print(login.__get_result__(test_data))
